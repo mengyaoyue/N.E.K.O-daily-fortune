@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import calendar
 import hashlib
 import random
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any
 
 # 运势等级：权重决定随机分布，大吉稀有、大凶也稀有（猫娘不忍心太凶）
@@ -92,24 +93,22 @@ def days_until_weekend(now: datetime) -> int:
 
 
 def days_until_payday(now: datetime, payday: int) -> int:
-    """距离下一个发薪日的天数；``payday`` 非法或为 0 时返回 -1。"""
-    if not isinstance(payday, int) or payday <= 0 or payday > 31:
+    """距离下一个发薪日的天数；``payday`` 非法或为 0 时返回 -1。
+
+    发薪日按「每月第 payday 天」计算；若该月没有这一天（如 2 月没有 30 号），
+    则顺延到该月最后一天发薪。
+    """
+    if isinstance(payday, bool) or not isinstance(payday, int) or payday <= 0 or payday > 31:
         return -1
     today = now.date()
-    try:
-        this_month = today.replace(day=payday)
-    except ValueError:
-        # 2 月没有 30/31 号 → 顺延到下月 1 号当发薪
-        if today.day >= payday:
-            nxt = today.replace(day=1) + timedelta(days=32)
-            return (nxt.replace(day=1) - today).days
-        this_month = today.replace(day=28)
-    if this_month >= today:
-        return (this_month - today).days
-    nxt = (this_month + timedelta(days=32)).replace(day=min(payday, 28))
-    if nxt <= today:
-        nxt = (this_month.replace(day=28) + timedelta(days=32)).replace(day=min(payday, 28))
-    return (nxt - today).days
+    for offset in range(0, 13):
+        year = today.year + (today.month - 1 + offset) // 12
+        month = (today.month - 1 + offset) % 12 + 1
+        last_day = calendar.monthrange(year, month)[1]
+        candidate = date(year, month, min(payday, last_day))
+        if candidate >= today:
+            return (candidate - today).days
+    return -1
 
 
 def render_fortune(fortune: dict[str, Any], master_name: str = "主人", catgirl_name: str = "猫娘") -> str:

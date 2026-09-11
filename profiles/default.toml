@@ -8,6 +8,10 @@ water_start = "09:00"
 water_end = "21:00"
 water_interval_minutes = 60
 
+[neko_daily_fortune.switches]
+morning_push = true
+water_reminder = false
+
 [plugin_runtime]
 enabled = true
 auto_start = true

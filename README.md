@@ -34,6 +34,8 @@
 | `payday` | 0 | 发薪日（1-31），0 不显示 |
 | `water_start` / `water_end` | 09:00 / 21:00 | 喝水提醒生效时段 |
 | `water_interval_minutes` | 60 | 喝水提醒间隔（最小 10 分钟） |
+| `switches.morning_push` | true | 早安摸鱼日报开关（也可用入口 `set_switch`） |
+| `switches.water_reminder` | false | 喝水提醒开关（也可用入口 `set_switch`） |
 
 ## 本地自测（无需 N.E.K.O 运行）
 

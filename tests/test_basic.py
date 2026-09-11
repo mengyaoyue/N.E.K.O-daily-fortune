@@ -55,6 +55,12 @@ def main():
     assert_eq(mod.days_until_payday(datetime(2026, 9, 11), 10), 29, "9/11 距 10/10 为 29 天")
     assert_eq(mod.days_until_payday(datetime(2026, 9, 10), 0), -1, "未设置发薪日返回 -1")
     assert_eq(mod.days_until_payday(datetime(2026, 9, 10), 99), -1, "非法发薪日返回 -1")
+    assert_eq(mod.days_until_payday(datetime(2026, 9, 10), True), -1, "布尔值不算合法发薪日")
+    # 29-31 号边界：当月没有该日 → 顺延到当月最后一天，跨月仍要正确
+    assert_eq(mod.days_until_payday(datetime(2026, 3, 31), 30), 30, "3/31 距 4/30 为 30 天")
+    assert_eq(mod.days_until_payday(datetime(2026, 3, 31), 31), 0, "3/31 当天发薪为 0")
+    assert_eq(mod.days_until_payday(datetime(2026, 1, 31), 29), 28, "1/31 距 2/28（2026 无 2/29）为 28 天")
+    assert_eq(mod.days_until_payday(datetime(2026, 4, 1), 31), 29, "4/1 距 4/30（4 月无 31 号）为 29 天")
 
     # 5. 渲染：运势签 / 早安日报都是猫娘口吻且包含关键信息
     text = mod.render_fortune(a, "主人", "猫娘")

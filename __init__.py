@@ -139,8 +139,12 @@ class DailyFortunePlugin(NekoPluginBase):
         switches_cfg = switches_cfg if isinstance(switches_cfg, dict) else {}
         for key, default in _DEFAULT_SWITCHES.items():
             self.switches[key] = _safe_bool(switches_cfg.get(key, self.switches.get(key, default)), default)
-        # 开关持久化状态覆盖配置默认值
-        self.switches.update(self._load_state().get("switches", {}))
+        # 开关持久化状态覆盖配置默认值（类型与布尔化守卫，避免脏状态导致启动失败）
+        saved_switches = self._load_state().get("switches")
+        if isinstance(saved_switches, dict):
+            for key in _DEFAULT_SWITCHES:
+                if key in saved_switches:
+                    self.switches[key] = _safe_bool(saved_switches[key], self.switches[key])
         self._config_loaded = True
 
     async def _ensure_config_loaded(self) -> None:
@@ -200,7 +204,8 @@ class DailyFortunePlugin(NekoPluginBase):
                     last_minute = minute_key
                     self._handle_minute(now)
                 # 喝水提醒按独立间隔触发（不占 last_minute，避免和其他推送抢拍）
-                self._maybe_water(now, last_water_minute)
+                if self._maybe_water(now, last_water_minute):
+                    last_water_minute = minute_key
             except Exception:
                 self.logger.exception("[daily_fortune] tick 异常")
             self._wake_event.clear()
@@ -229,12 +234,13 @@ class DailyFortunePlugin(NekoPluginBase):
                 state["morning_pushed_date"] = today
                 self._save_state(state)
 
-    def _maybe_water(self, now: datetime, last_water_minute: str) -> None:
+    def _maybe_water(self, now: datetime, last_water_minute: str) -> bool:
+        """判断并推送喝水提醒；返回是否真的推送了（供 ticker 去重）。"""
         if not self.switches.get("water_reminder", False):
-            return
+            return False
         minute_key = now.strftime("%Y-%m-%d %H:%M")
         if minute_key == last_water_minute:
-            return
+            return False
         try:
             start = now.replace(
                 hour=int(self.water_start.split(":")[0]), minute=int(self.water_start.split(":")[1]),
@@ -245,16 +251,17 @@ class DailyFortunePlugin(NekoPluginBase):
                 second=0, microsecond=0,
             )
         except (ValueError, IndexError):
-            return
+            return False
         if not (start <= now <= end):
-            return
+            return False
         # 对齐间隔：分钟数被 interval 整除才触发
         if now.minute % max(10, self.water_interval_minutes) != 0:
-            return
+            return False
         self._push(
             f"💧 喝水时间到喵！{self.master_name}要好好喝水，本喵才会放心～",
             metadata={"description": "🐱 喝水提醒"},
         )
+        return True
 
     def _push(self, text: str, metadata: Optional[dict] = None) -> None:
         try:
