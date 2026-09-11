@@ -1,0 +1,16 @@
+# 猫娘每日关怀（neko_daily_fortune）配置示例
+# 安装时会作为 config/plugin.toml 的默认值。
+
+[plugin_runtime]
+enabled = true
+auto_start = true
+
+[neko_daily_fortune]
+master_name = "主人"
+catgirl_name = "猫娘"
+timezone = "Asia/Shanghai"
+push_time = "08:30"
+payday = 0
+water_start = "09:00"
+water_end = "21:00"
+water_interval_minutes = 60
