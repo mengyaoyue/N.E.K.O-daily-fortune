@@ -31,6 +31,8 @@ from plugin.sdk.plugin import (
 
 from ._fortune_images import render_fortune_card, render_wife_card
 from ._image_sources import fetch_character_image
+from ._platform import PlatformServer
+import os as _os
 from ._fortune_logic import (
     daily_fortune,
     render_fortune,
@@ -121,6 +123,11 @@ class DailyFortunePlugin(NekoPluginBase):
         self.switches: dict[str, bool] = dict(_DEFAULT_SWITCHES)
         self.portrait_path: str = ""
         self.fetch_image: bool = True
+        self.platform_port: int = 15672
+        self.platform_enabled: bool = True
+        self.auto_open: bool = True
+        self._platform: Optional[PlatformServer] = None
+        self._users_lock = threading.Lock()
         self._config_loaded = False
 
         # 多用户档案（"仅本插件的小平台"）：per-user 运势/老婆/货币记录
@@ -153,6 +160,9 @@ class DailyFortunePlugin(NekoPluginBase):
         self.water_end = _safe_str(section.get("water_end"), "21:00") or "21:00"
         self.portrait_path = _safe_str(section.get("portrait_path"))
         self.fetch_image = _safe_bool(section.get("fetch_image"), True)
+        self.platform_port = _safe_int(section.get("platform_port"), 15672)
+        self.platform_enabled = _safe_bool(section.get("platform_enabled"), True)
+        self.auto_open = _safe_bool(section.get("auto_open"), True)
         self._portrait_dirs = []
 
         switches_cfg = section.get("switches")
@@ -228,14 +238,103 @@ class DailyFortunePlugin(NekoPluginBase):
             target=self._tick_loop, daemon=True, name="neko-daily-fortune-tick"
         )
         self._tick_thread.start()
+        self._start_platform()
         self.logger.info(
             "[daily_fortune] 启动：master={}, push_time={}, switches={}",
             self.master_name, self.push_time, self.switches,
         )
         return Ok({"status": "running", "version": "0.1.0"})
 
+    def _start_platform(self) -> None:
+        """启动附属网页（仅 127.0.0.1）；端口占用则自动 +1 重试三次。"""
+        if not self.platform_enabled:
+            return
+        for offset in range(4):
+            server = PlatformServer(
+                self.platform_port + offset, self.data_dir / "cards", self._platform_data
+            )
+            if server.start():
+                self._platform = server
+                self.platform_port += offset
+                self.logger.info("[daily_fortune] 平台网页已启动: http://127.0.0.1:{}", self.platform_port)
+                return
+        self.logger.warning("[daily_fortune] 平台网页启动失败（端口全被占用）")
+
+    def _platform_data(self, user_id: str) -> dict[str, Any]:
+        """为平台页面准备数据：确保当天卡片已生成（线程安全，幂等）。"""
+        with self._users_lock:
+            fortune, wife, rewards, ordinal = self._today_record_sync(user_id, self.users.get(user_id, {}).get("name") or self.master_name)
+            user = self.users.get(user_id, {})
+            total_luck = int(user.get("total_luck", 0))
+            day_score = int((user.get("days") or {}).get(fortune.get("date", ""), {}).get("score", 0))
+            fortune_img = f"cards/fortune_{user_id}_{fortune['date']}.png"
+            wife_img = f"cards/wife_{user_id}_{wife['date']}.png"
+            fp = self.data_dir / fortune_img
+            wp = self.data_dir / wife_img
+            if not fp.exists():
+                render_fortune_card(str(fp), fortune, user.get("name") or self.master_name,
+                                    self.catgirl_name, portrait_path=self.portrait_path or None,
+                                    portrait_dirs=self._portrait_search_dirs(),
+                                    total_luck=total_luck, luck_score=day_score)
+            if not wp.exists():
+                char_img = None
+                if self.fetch_image:
+                    char_img = fetch_character_image(
+                        str(wife.get("en_tag") or ""),
+                        str(self.data_dir / f"cards/wifeimg_{user_id}_{wife['date']}.img"),
+                        f"{wife['date']}|{user_id}",
+                    )
+                render_wife_card(str(wp), wife, user.get("name") or self.master_name, ordinal,
+                                 rewards["silver"], rewards["gold"], self.catgirl_name,
+                                 portrait_path=self.portrait_path or None,
+                                 portrait_dirs=self._portrait_search_dirs(),
+                                 character_image=char_img)
+            self._save_users()
+            rows = luck_ranking(self.users, fortune.get("date", ""))
+            from ._fortune_logic import render_fortune
+            return {
+                "today": fortune.get("date", ""),
+                "fortune_img": "/" + fortune_img,
+                "wife_img": "/" + wife_img,
+                "fortune_text": f"{fortune.get('emoji')} {fortune.get('level')}｜宜 {'、'.join(fortune.get('do', []))[:14]}｜摸鱼 {fortune.get('fish_index', 50)}/100",
+                "wife_text": f"{wife['name']}《{wife['work']}》｜第 {ordinal} 个｜契合度 {wife['bond']}",
+                "rank_rows": rows,
+                "user_name": user.get("name") or self.master_name,
+                "me": {"user_id": user_id, **user},
+                "catgirl_name": self.catgirl_name,
+            }
+
+    def _today_record_sync(self, user_id: str, user_name: str):
+        """_today_record 的同步版（平台线程里没有事件循环）。"""
+        now = _now_in_tz(self.timezone)
+        today = now.strftime("%Y-%m-%d")
+        fortune = daily_fortune(today, user_id)
+        score = luck_score_for(str(fortune.get("level", "吉")))
+        wife = draw_wife(today, user_id, self.catgirl_name)
+        rewards = wife_rewards(int(fortune.get("fish_index", 50)), today, user_id)
+        user = update_user_record(self.users, user_id, user_name, today, score, rewards, wife["name"])
+        self.wife_counter[today] = int(self.wife_counter.get(today, 0)) + 1
+        ordinal = self.wife_counter[today]
+        return fortune, wife, rewards, ordinal
+
+    def _open_browser(self, url: str) -> bool:
+        try:
+            if _os.name == "nt":
+                _os.startfile(url)  # type: ignore[attr-defined]
+                return True
+            import subprocess
+            subprocess.Popen(["xdg-open", url])
+            return True
+        except Exception:
+            return False
+
+    def _platform_url(self, user_id: str) -> str:
+        return f"http://127.0.0.1:{self.platform_port}/?user={user_id}"
+
     @lifecycle(id="shutdown")
     def shutdown(self, **_):
+        if self._platform:
+            self._platform.stop()
         self._stop_event.set()
         self._wake_event.set()
         if self._tick_thread and self._tick_thread.is_alive():
@@ -463,13 +562,17 @@ class DailyFortunePlugin(NekoPluginBase):
             portrait_dirs=self._portrait_search_dirs(),
             character_image=char_img,
         )
+        via = "（图片来源：图站检索）" if char_img else "（图站没搜到，本喵手绘的占位卡喵）"
+        url = self._platform_url(uid)
+        if self.auto_open:
+            self._open_browser(url)
         return Ok(
             f"你的今日老婆是「{wife['name']}」（{wife['work']}）喵！\n"
             f"🌸 今天的第 {ordinal} 个老婆\n"
             f"🪙 银币 +{rewards['silver']}　💠 金币 +{rewards['gold']}\n"
             f"💞 与主人的契合度 {wife['bond']}\n"
-            f"🖼 卡片已生成：{img_path}\n"
-            + ("（图片来源：图站检索）" if char_img else "（图站没搜到，本喵手绘的占位卡喵）")
+            f"🖼 卡片已生成：{img_path}\n{via}\n"
+            f"🖥 看图请看弹出的平台页：{url}"
         )
 
     @plugin_entry(
@@ -500,12 +603,15 @@ class DailyFortunePlugin(NekoPluginBase):
             total_luck=total_luck,
             luck_score=day_score,
         )
+        if self.auto_open:
+            self._open_browser(self._platform_url(uid))
         return Ok(
             f"{fortune.get('emoji')} 今日运势：{fortune.get('level')}（{fortune.get('date')}）\n"
-            f"🍀 幸运 {fortune.get('score', 0):+d}｜累积幸运 {total_luck}\n"
+            f"🍀 幸运 {day_score:+d}｜累积幸运 {total_luck}\n"
             f"✅ 宜 {'、'.join(fortune.get('do', []))}\n"
             f"🚫 忌 {'、'.join(fortune.get('dont', []))}\n"
-            f"🖼 签卡已生成：{img_path}"
+            f"🖼 签卡已生成：{img_path}\n"
+            f"🖥 看图请看弹出的平台页：{self._platform_url(uid)}"
         )
 
     @plugin_entry(
@@ -528,6 +634,29 @@ class DailyFortunePlugin(NekoPluginBase):
         if me:
             text += f"\n（你目前的银币 {me.get('coins', {}).get('silver', 0)}｜金币 {me.get('coins', {}).get('gold', 0)}）"
         return Ok(text)
+
+    @plugin_entry(
+        id="open_platform",
+        name="打开关怀平台",
+        description="在浏览器打开猫娘每日关怀平台（运势卡/老婆卡/幸运排行，仅本机可访问）。",
+        input_schema={
+            "type": "object",
+            "properties": {"user_id": {"type": "string"}, "user_name": {"type": "string"}},
+        },
+    )
+    async def open_platform_entry(self, user_id: str = "", user_name: str = "", **_):
+        await self._ensure_config_loaded()
+        if not self.platform_enabled or not self._platform:
+            return Err(SdkError("平台网页未开启喵（platform_enabled=false 或端口被占）。"))
+        uid = _safe_str(user_id, "local") or "local"
+        if user_name:
+            with self._users_lock:
+                self._load_users()
+                self.users.setdefault(uid, {}).setdefault("name", user_name)
+                self._save_users()
+        url = self._platform_url(uid)
+        opened = self._open_browser(url)
+        return Ok(f"平台页{'已在浏览器打开' if opened else '地址'}喵：{url}")
 
     @plugin_entry(
         id="status",
