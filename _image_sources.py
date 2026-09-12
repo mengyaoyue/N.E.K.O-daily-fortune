@@ -138,3 +138,30 @@ def fetch_character_image(
             except Exception:
                 continue
     return None
+
+
+# 猫娘运势卡的主题标签池：按日期轮换，同一天所有用户同一张
+CATGIRL_TAGS = ("cat_girl", "nekomimi", "cat_ears", "animal_ears")
+
+
+def fetch_catgirl_artwork(
+    save_path: str,
+    seed_key: str,
+    timeout: float = 12.0,
+    limit: int = 20,
+    fetchers: Optional[dict[str, Callable[[str, int, float], list[str]]]] = None,
+    downloader: Optional[Callable[[str], tuple[int, bytes]]] = None,
+) -> Optional[str]:
+    """拉取"猫娘"主题插画作为当日运势卡图。
+
+    标签按 seed（含日期）确定性轮换；来源链 safebooru→danbooru→yandere，
+    任一来源命中即短路。全失败返回 None。
+    """
+    import hashlib as _hashlib
+
+    digest = _hashlib.sha256(f"catgirl-art|{seed_key}".encode("utf-8")).digest()
+    tag = CATGIRL_TAGS[int.from_bytes(digest[:4], "big") % len(CATGIRL_TAGS)]
+    return fetch_character_image(
+        tag, save_path, seed_key, timeout=timeout, limit=limit,
+        fetchers=fetchers, downloader=downloader,
+    )

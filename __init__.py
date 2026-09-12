@@ -30,7 +30,7 @@ from plugin.sdk.plugin import (
 )
 
 from ._fortune_images import render_fortune_card, render_wife_card
-from ._image_sources import fetch_character_image
+from ._image_sources import fetch_character_image, fetch_catgirl_artwork
 from ._platform import PlatformServer
 import os as _os
 from ._fortune_logic import (
@@ -123,6 +123,7 @@ class DailyFortunePlugin(NekoPluginBase):
         self.switches: dict[str, bool] = dict(_DEFAULT_SWITCHES)
         self.portrait_path: str = ""
         self.fetch_image: bool = True
+        self.fortune_art_source: str = "local"
         self.platform_port: int = 15672
         self.platform_enabled: bool = True
         self.auto_open: bool = True
@@ -160,6 +161,8 @@ class DailyFortunePlugin(NekoPluginBase):
         self.water_end = _safe_str(section.get("water_end"), "21:00") or "21:00"
         self.portrait_path = _safe_str(section.get("portrait_path"))
         self.fetch_image = _safe_bool(section.get("fetch_image"), True)
+        art_src = _safe_str(section.get("fortune_art_source"), "local").lower()
+        self.fortune_art_source = art_src if art_src in ("auto", "local", "off") else "auto"
         self.platform_port = _safe_int(section.get("platform_port"), 15672)
         self.platform_enabled = _safe_bool(section.get("platform_enabled"), True)
         self.auto_open = _safe_bool(section.get("auto_open"), True)
@@ -280,9 +283,9 @@ class DailyFortunePlugin(NekoPluginBase):
             fp = self.data_dir / fortune_img
             wp = self.data_dir / wife_img
             if not fp.exists():
+                art = self._get_fortune_art(str(fortune.get("date", "")), user_id)
                 render_fortune_card(str(fp), fortune, user.get("name") or self.master_name,
-                                    self.catgirl_name, portrait_path=self.portrait_path or None,
-                                    portrait_dirs=self._portrait_search_dirs(),
+                                    self.catgirl_name, portrait_path=art,
                                     total_luck=total_luck, luck_score=day_score)
             if not wp.exists():
                 char_img = None
@@ -324,6 +327,43 @@ class DailyFortunePlugin(NekoPluginBase):
         self.wife_counter[today] = int(self.wife_counter.get(today, 0)) + 1
         ordinal = self.wife_counter[today]
         return fortune, wife, rewards, ordinal
+
+    def _local_portrait_rotation(self, date: str) -> Optional[str]:
+        """本地卡面库轮换：card_faces / character_cards 里所有图按日期轮着用。"""
+        dirs = self._portrait_search_dirs()
+        pool: list[Path] = []
+        for d in dirs:
+            base = Path(d)
+            if base.is_dir():
+                for pattern in ("*.png", "*.jpg", "*.jpeg", "*.webp"):
+                    pool.extend(base.glob(pattern))
+        if not pool:
+            return None
+        pool = sorted(set(pool))
+        import hashlib as _hl
+        idx = int.from_bytes(_hl.sha256(date.encode("utf-8")).digest()[:4], "big") % len(pool)
+        return str(pool[idx])
+
+    def _get_fortune_art(self, date: str, user_id: str) -> Optional[str]:
+        """当日运势卡配图：图站猫娘插画（auto）→ 本地社区卡面轮换 → 固定立绘。
+
+        当天缓存一次（art_{date}.img），全用户共享同一张当日图。
+        """
+        cache = self.data_dir / f"cards/art_{date}.img"
+        if cache.exists():
+            return str(cache)
+        if self.fortune_art_source == "auto" and self.fetch_image:
+            try:
+                got = fetch_catgirl_artwork(str(cache), f"{date}|{user_id}")
+                if got:
+                    return got
+            except Exception:
+                pass
+        if self.fortune_art_source in ("auto", "local"):
+            local = self._local_portrait_rotation(date)
+            if local:
+                return local
+        return self.portrait_path or None
 
     def _open_browser(self, url: str) -> bool:
         try:
@@ -604,10 +644,10 @@ class DailyFortunePlugin(NekoPluginBase):
         total_luck = int(user.get("total_luck", 0))
         day_score = int((user.get("days") or {}).get(fortune.get("date", ""), {}).get("score", luck_score_for(str(fortune.get("level", "吉")))))
         img_path = self.data_dir / f"cards/fortune_{uid}_{fortune['date']}.png"
+        art = self._get_fortune_art(str(fortune.get("date", "")), uid)
         render_fortune_card(
             str(img_path), fortune, uname, self.catgirl_name,
-            portrait_path=self.portrait_path or None,
-            portrait_dirs=self._portrait_search_dirs(),
+            portrait_path=art,
             total_luck=total_luck,
             luck_score=day_score,
         )
