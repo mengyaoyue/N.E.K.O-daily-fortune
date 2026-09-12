@@ -30,6 +30,7 @@ from plugin.sdk.plugin import (
 )
 
 from ._fortune_images import render_fortune_card, render_wife_card
+from ._image_sources import fetch_character_image
 from ._fortune_logic import (
     daily_fortune,
     render_fortune,
@@ -119,6 +120,7 @@ class DailyFortunePlugin(NekoPluginBase):
         self.water_end: str = "21:00"
         self.switches: dict[str, bool] = dict(_DEFAULT_SWITCHES)
         self.portrait_path: str = ""
+        self.fetch_image: bool = True
         self._config_loaded = False
 
         # 多用户档案（"仅本插件的小平台"）：per-user 运势/老婆/货币记录
@@ -150,6 +152,7 @@ class DailyFortunePlugin(NekoPluginBase):
         self.water_start = _safe_str(section.get("water_start"), "09:00") or "09:00"
         self.water_end = _safe_str(section.get("water_end"), "21:00") or "21:00"
         self.portrait_path = _safe_str(section.get("portrait_path"))
+        self.fetch_image = _safe_bool(section.get("fetch_image"), True)
         self._portrait_dirs = []
 
         switches_cfg = section.get("switches")
@@ -444,18 +447,29 @@ class DailyFortunePlugin(NekoPluginBase):
         uname = _safe_str(user_name, self.master_name) or self.master_name
         _fortune, wife, rewards, ordinal = await self._today_record(uid, uname)
         img_path = self.data_dir / f"cards/wife_{uid}_{wife['date']}.png"
+        # 多来源拉角色图（首个成功即短路）；全失败回退本地绘制
+        char_img = None
+        if self.fetch_image:
+            char_img = await asyncio.to_thread(
+                fetch_character_image,
+                str(wife.get("en_tag") or ""),
+                str(self.data_dir / f"cards/wifeimg_{uid}_{wife['date']}.img"),
+                f"{wife['date']}|{uid}",
+            )
         render_wife_card(
             str(img_path), wife, uname, ordinal,
             rewards["silver"], rewards["gold"], self.catgirl_name,
             portrait_path=self.portrait_path or None,
             portrait_dirs=self._portrait_search_dirs(),
+            character_image=char_img,
         )
         return Ok(
             f"你的今日老婆是「{wife['name']}」（{wife['work']}）喵！\n"
             f"🌸 今天的第 {ordinal} 个老婆\n"
             f"🪙 银币 +{rewards['silver']}　💠 金币 +{rewards['gold']}\n"
             f"💞 与主人的契合度 {wife['bond']}\n"
-            f"🖼 卡片已生成：{img_path}"
+            f"🖼 卡片已生成：{img_path}\n"
+            + ("（图片来源：图站检索）" if char_img else "（图站没搜到，本喵手绘的占位卡喵）")
         )
 
     @plugin_entry(

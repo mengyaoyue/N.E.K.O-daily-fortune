@@ -185,6 +185,7 @@ def render_wife_card(
     catgirl_name: str = "猫娘",
     portrait_path: Optional[str] = None,
     portrait_dirs: Optional[list[str]] = None,
+    character_image: Optional[str] = None,
 ) -> str:
     """渲染今日老婆卡。同 (date, user) 输出逐字节一致。"""
     w, h = 760, 960
@@ -211,8 +212,10 @@ def render_wife_card(
     if work:
         draw.text((66, 278), f"《{work[:16]}》", font=_font(32), fill=(110, 110, 125))
 
-    # 立绘占位：找得到图就贴，找不到画装饰框
-    portrait = _load_portrait(portrait_path, portrait_dirs)
+    # 角色图优先用网络拉取的；没有则回退猫娘立绘占位
+    portrait = _load_portrait(character_image, None) if character_image else None
+    if portrait is None:
+        portrait = _load_portrait(portrait_path, portrait_dirs)
     box = (64, 340, w - 64, 800)
     _rounded(draw, box, 30, fill=(255, 255, 255, 200), outline=main, width=5)
     if portrait is not None:

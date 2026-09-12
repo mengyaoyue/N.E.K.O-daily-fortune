@@ -6,21 +6,49 @@ import random
 from typing import Any
 
 # 今日老婆池：广为人知的二次元女性角色（name, work）。够丰富但不追求全。
-WAIFU_POOL: list[tuple[str, str]] = [
-    ("雷姆", "Re:从零开始的异世界生活"), ("拉姆", "Re:从零开始的异世界生活"),
-    ("艾米莉娅", "Re:从零开始的异世界生活"), ("后藤一里", "孤独摇滚！"),
-    ("伊地知虹夏", "孤独摇滚！"), ("山田凉", "孤独摇滚！"), ("喜多郁代", "孤独摇滚！"),
-    ("芙莉莲", "葬送的芙莉莲"), ("费伦", "葬送的芙莉莲"),
-    ("芙宁娜", "原神"), ("神里绫华", "原神"), ("雷电将军", "原神"), ("甘雨", "原神"),
-    ("胡桃", "原神"), ("八重神子", "原神"), ("刻晴", "原神"), ("纳西妲", "原神"),
-    ("心海", "原神"), ("优菈", "原神"), ("宵宫", "原神"), ("芭芭拉", "原神"),
-    ("三月七", "崩坏：星穹铁道"), ("卡芙卡", "崩坏：星穹铁道"), ("银狼", "崩坏：星穹铁道"),
-    ("花火", "崩坏：星穹铁道"), ("姬子", "崩坏：星穹铁道"),
-    ("阿米娅", "明日方舟"), ("陈晖洁", "明日方舟"), ("凯尔希", "明日方舟"), ("能天使", "明日方舟"),
-    ("加藤惠", "路人女主的养成方法"), ("亚丝娜", "刀剑神域"), ("御坂美琴", "魔法禁书目录"),
-    ("时崎狂三", "约会大作战"), ("约尔", "间谍过家家"), ("帕瓦", "电锯人"), ("玛奇玛", "电锯人"),
-    ("星野爱", "我推的孩子"), ("雏田", "火影忍者"), ("娜美", "海贼王"),
-    ("祢豆子", "鬼灭之刃"), ("维什黛", "崩坏3"),
+WAIFU_POOL: list[tuple[str, str, str]] = [
+    ("雷姆", "Re:从零开始的异世界生活", "rem_(re:zero)"),
+    ("拉姆", "Re:从零开始的异世界生活", "ram_(re:zero)"),
+    ("艾米莉娅", "Re:从零开始的异世界生活", "emilia_(re:zero)"),
+    ("后藤一里", "孤独摇滚！", "gotou_hitori"),
+    ("伊地知虹夏", "孤独摇滚！", "ijichi_nijika"),
+    ("山田凉", "孤独摇滚！", "yamada_ryou"),
+    ("喜多郁代", "孤独摇滚！", "kita_ikuyo"),
+    ("芙莉莲", "葬送的芙莉莲", "frieren"),
+    ("费伦", "葬送的芙莉莲", "fern_(sousou_no_frieren)"),
+    ("芙宁娜", "原神", "furina"),
+    ("神里绫华", "原神", "kamisato_ayaka"),
+    ("雷电将军", "原神", "raiden_shogun"),
+    ("甘雨", "原神", "ganyu"),
+    ("胡桃", "原神", "hu_tao"),
+    ("八重神子", "原神", "yae_miko"),
+    ("刻晴", "原神", "keqing"),
+    ("纳西妲", "原神", "nahida"),
+    ("心海", "原神", "sangonomiya_kokomi"),
+    ("优菈", "原神", "eula_(genshin_impact)"),
+    ("宵宫", "原神", "yoimiya"),
+    ("芭芭拉", "原神", "barbara_(genshin_impact)"),
+    ("三月七", "崩坏：星穹铁道", "march_7th"),
+    ("卡芙卡", "崩坏：星穹铁道", "kafka_(honkai:_star_rail)"),
+    ("银狼", "崩坏：星穹铁道", "silver_wolf_(honkai:_star_rail)"),
+    ("花火", "崩坏：星穹铁道", "sparkle_(honkai:_star_rail)"),
+    ("姬子", "崩坏：星穹铁道", "himeko_(honkai:_star_rail)"),
+    ("阿米娅", "明日方舟", "amiya_(arknights)"),
+    ("陈晖洁", "明日方舟", "ch'en_(arknights)"),
+    ("凯尔希", "明日方舟", "kal'tsit"),
+    ("能天使", "明日方舟", "exusiai"),
+    ("加藤惠", "路人女主的养成方法", "kato_megumi"),
+    ("亚丝娜", "刀剑神域", "yuuki_asuna"),
+    ("御坂美琴", "魔法禁书目录", "misaka_mikoto"),
+    ("时崎狂三", "约会大作战", "tokisaki_kurumi"),
+    ("约尔", "间谍过家家", "yor_forger"),
+    ("帕瓦", "电锯人", "power_(chainsaw_man)"),
+    ("玛奇玛", "电锯人", "makima_(chainsaw_man)"),
+    ("星野爱", "我推的孩子", "hoshino_ai"),
+    ("雏田", "火影忍者", "hyuuga_hinata"),
+    ("娜美", "海贼王", "nami_(one_piece)"),
+    ("祢豆子", "鬼灭之刃", "kamado_nezuko"),
+    ("蕾塞", "电锯人", "reze_(chainsaw_man)"),
 ]
 
 # 运势等级 → 幸运积分（参考同类机器人：凶签扣分）
@@ -30,12 +58,13 @@ LUCK_SCORES = {"大吉": 7, "中吉": 5, "小吉": 3, "吉": 1, "末吉": 0, "�
 def draw_wife(date: str, user_id: str, catgirl_name: str = "猫娘") -> dict[str, Any]:
     """抽今日老婆：同 (date, user) 恒定；附与猫娘的 CP 值彩蛋。"""
     rng = random.Random(f"waifu|{date}|{user_id}")
-    name, work = rng.choice(WAIFU_POOL)
+    name, work, en_tag = rng.choice(WAIFU_POOL)
     return {
         "date": date,
         "user_id": user_id,
         "name": name,
         "work": work,
+        "en_tag": en_tag,
         "bond": rng.randrange(60, 100),  # 与主人的契合度彩蛋
     }
 
