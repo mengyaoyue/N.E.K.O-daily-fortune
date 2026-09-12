@@ -29,10 +29,19 @@ from plugin.sdk.plugin import (
     plugin_entry,
 )
 
+from ._fortune_images import render_fortune_card, render_wife_card
 from ._fortune_logic import (
     daily_fortune,
     render_fortune,
     render_morning_report,
+)
+from ._waifu_logic import (
+    draw_wife,
+    luck_ranking,
+    luck_score_for,
+    render_luck_rank,
+    update_user_record,
+    wife_rewards,
 )
 
 _PLUGIN_ID = "neko_daily_fortune"
@@ -109,7 +118,13 @@ class DailyFortunePlugin(NekoPluginBase):
         self.water_start: str = "09:00"
         self.water_end: str = "21:00"
         self.switches: dict[str, bool] = dict(_DEFAULT_SWITCHES)
+        self.portrait_path: str = ""
         self._config_loaded = False
+
+        # 多用户档案（"仅本插件的小平台"）：per-user 运势/老婆/货币记录
+        self.users: dict[str, Any] = {}
+        self.wife_counter: dict[str, int] = {}
+        self._portrait_dirs: list[str] = []
 
         # 分钟级 ticker（与 catgirl_daily_planner 相同的框架模式）
         self._stop_event = threading.Event()
@@ -134,6 +149,8 @@ class DailyFortunePlugin(NekoPluginBase):
         self.water_interval_minutes = max(10, _safe_int(section.get("water_interval_minutes"), 60))
         self.water_start = _safe_str(section.get("water_start"), "09:00") or "09:00"
         self.water_end = _safe_str(section.get("water_end"), "21:00") or "21:00"
+        self.portrait_path = _safe_str(section.get("portrait_path"))
+        self._portrait_dirs = []
 
         switches_cfg = section.get("switches")
         switches_cfg = switches_cfg if isinstance(switches_cfg, dict) else {}
@@ -157,6 +174,37 @@ class DailyFortunePlugin(NekoPluginBase):
             return data if isinstance(data, dict) else {}
         except Exception:
             return {}
+
+    def _load_users(self) -> None:
+        state = self._load_state()
+        users = state.get("users")
+        self.users = users if isinstance(users, dict) else {}
+        counter = state.get("wife_counter")
+        self.wife_counter = counter if isinstance(counter, dict) else {}
+
+    def _save_users(self) -> None:
+        state = self._load_state()
+        state["users"] = self.users
+        state["wife_counter"] = self.wife_counter
+        self._save_state(state)
+
+    def _portrait_search_dirs(self) -> list[str]:
+        """猫娘立绘搜索目录：N.E.K.O 根目录的 card_faces / character_cards。"""
+        if self._portrait_dirs:
+            return self._portrait_dirs
+        dirs: list[str] = []
+        if _safe_str(self.portrait_path):
+            dirs.append(self.portrait_path)
+        try:
+            root = self.data_dir.parent.parent.parent
+            for name in ("card_faces", "character_cards"):
+                p = root / name
+                if p.is_dir():
+                    dirs.append(str(p))
+        except Exception:
+            pass
+        self._portrait_dirs = dirs
+        return dirs
 
     def _save_state(self, state: dict[str, Any]) -> None:
         try:
@@ -347,6 +395,125 @@ class DailyFortunePlugin(NekoPluginBase):
         self._save_state(state)
         label = "早安摸鱼日报" if feature == "morning_push" else "喝水提醒"
         return Ok(f"已{'开启' if enabled else '关闭'}「{label}」喵～")
+
+    async def _today_record(self, user_id: str, user_name: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], int]:
+        """取/建某用户当天的运势+老婆+奖励记录（幂等）。"""
+        await self._ensure_config_loaded()
+        self._load_users()
+        now = _now_in_tz(self.timezone)
+        today = now.strftime("%Y-%m-%d")
+        fortune = daily_fortune(today, user_id)
+        score = luck_score_for(str(fortune.get("level", "吉")))
+        wife = draw_wife(today, user_id, self.catgirl_name)
+        rewards = wife_rewards(int(fortune.get("fish_index", 50)), today, user_id)
+        user = update_user_record(
+            self.users, user_id, user_name, today, score, rewards, wife["name"]
+        )
+        self.wife_counter[today] = int(self.wife_counter.get(today, 0)) + 1
+        ordinal = self.wife_counter[today]
+        self._save_users()
+        return fortune, wife, rewards, ordinal
+
+    @llm_tool(
+        name="neko_daily_wife",
+        description="抽今日老婆：按用户和日期确定性随机一位二次元角色，带第N个老婆计数与银币/金币奖励，并生成老婆卡图片。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "用户标识（QQ 号等，可省略）"},
+                "user_name": {"type": "string", "description": "展示用昵称（可省略）"},
+            },
+        },
+        timeout=15.0,
+    )
+    @plugin_entry(
+        id="daily_wife",
+        name="今日老婆",
+        description="抽取今日老婆（同人同日结果固定），生成老婆卡图片并记录货币奖励。",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string"},
+                "user_name": {"type": "string"},
+            },
+        },
+    )
+    async def daily_wife_entry(self, user_id: str = "", user_name: str = "", **_):
+        await self._ensure_config_loaded()
+        uid = _safe_str(user_id, "local") or "local"
+        uname = _safe_str(user_name, self.master_name) or self.master_name
+        _fortune, wife, rewards, ordinal = await self._today_record(uid, uname)
+        img_path = self.data_dir / f"cards/wife_{uid}_{wife['date']}.png"
+        render_wife_card(
+            str(img_path), wife, uname, ordinal,
+            rewards["silver"], rewards["gold"], self.catgirl_name,
+            portrait_path=self.portrait_path or None,
+            portrait_dirs=self._portrait_search_dirs(),
+        )
+        return Ok(
+            f"你的今日老婆是「{wife['name']}」（{wife['work']}）喵！\n"
+            f"🌸 今天的第 {ordinal} 个老婆\n"
+            f"🪙 银币 +{rewards['silver']}　💠 金币 +{rewards['gold']}\n"
+            f"💞 与主人的契合度 {wife['bond']}\n"
+            f"🖼 卡片已生成：{img_path}"
+        )
+
+    @plugin_entry(
+        id="fortune_card",
+        name="运势签图片",
+        description="生成签文式运势卡图片（每天不同，猫娘立绘入卡），返回文字摘要与图片路径。",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string"},
+                "user_name": {"type": "string"},
+            },
+        },
+    )
+    async def fortune_card_entry(self, user_id: str = "", user_name: str = "", **_):
+        await self._ensure_config_loaded()
+        uid = _safe_str(user_id, "local") or "local"
+        uname = _safe_str(user_name, self.master_name) or self.master_name
+        fortune, _wife, _rewards, _ordinal = await self._today_record(uid, uname)
+        user = self.users.get(uid, {})
+        total_luck = int(user.get("total_luck", 0))
+        day_score = int((user.get("days") or {}).get(fortune.get("date", ""), {}).get("score", luck_score_for(str(fortune.get("level", "吉")))))
+        img_path = self.data_dir / f"cards/fortune_{uid}_{fortune['date']}.png"
+        render_fortune_card(
+            str(img_path), fortune, uname, self.catgirl_name,
+            portrait_path=self.portrait_path or None,
+            portrait_dirs=self._portrait_search_dirs(),
+            total_luck=total_luck,
+            luck_score=day_score,
+        )
+        return Ok(
+            f"{fortune.get('emoji')} 今日运势：{fortune.get('level')}（{fortune.get('date')}）\n"
+            f"🍀 幸运 {fortune.get('score', 0):+d}｜累积幸运 {total_luck}\n"
+            f"✅ 宜 {'、'.join(fortune.get('do', []))}\n"
+            f"🚫 忌 {'、'.join(fortune.get('dont', []))}\n"
+            f"🖼 签卡已生成：{img_path}"
+        )
+
+    @plugin_entry(
+        id="luck_rank",
+        name="幸运排行",
+        description="查看本插件记录的幸运排行榜（累计幸运分，可附今日分）。",
+        input_schema={
+            "type": "object",
+            "properties": {"user_id": {"type": "string"}},
+        },
+    )
+    async def luck_rank_entry(self, user_id: str = "", **_):
+        await self._ensure_config_loaded()
+        self._load_users()
+        today = _now_in_tz(self.timezone).strftime("%Y-%m-%d")
+        rows = luck_ranking(self.users, today)
+        text = render_luck_rank(rows, today, self.catgirl_name)
+        uid = _safe_str(user_id, "local") or "local"
+        me = self.users.get(uid)
+        if me:
+            text += f"\n（你目前的银币 {me.get('coins', {}).get('silver', 0)}｜金币 {me.get('coins', {}).get('gold', 0)}）"
+        return Ok(text)
 
     @plugin_entry(
         id="status",
