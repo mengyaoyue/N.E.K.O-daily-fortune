@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>猫娘的每日关怀平台</title>
+<style>
+body{margin:0;font-family:'Microsoft YaHei',sans-serif;background:#1b1826;color:#e8e4f2;display:flex;justify-content:center;padding:24px}
+.wrap{max-width:900px;width:100%}
+h1{font-size:26px;margin:8px 0 4px}
+.sub{color:#9a93b5;font-size:14px;margin-bottom:16px}
+.cards{display:flex;gap:18px;flex-wrap:wrap}
+.card{background:#241f33;border:1px solid #3a3352;border-radius:16px;padding:14px;flex:1;min-width:340px}
+.card img{width:100%;border-radius:10px;display:block;min-height:200px;background:#2a2440}
+.card h2{font-size:18px;margin:4px 0 10px;color:#c9b9ff}
+.rank{background:#241f33;border:1px solid #3a3352;border-radius:16px;padding:16px;margin-top:18px}
+.rank table{width:100%;border-collapse:collapse;font-size:15px}
+.rank td{padding:7px 6px;border-bottom:1px solid #322b4a}
+.rank tr.me{background:#2e2745;border-radius:8px}
+button{background:#6c5ce7;color:#fff;border:0;border-radius:10px;padding:8px 18px;font-size:14px;cursor:pointer}
+button:hover{background:#7d6ef0}
+#status{color:#9a93b5;font-size:13px;margin:8px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🐾 猫娘的每日关怀平台</h1>
+  <div class="sub" id="today">加载中喵…</div>
+  <button onclick="loadData()">刷新</button>
+  <span id="status"></span>
+  <div class="cards" style="margin-top:14px">
+    <div class="card"><h2>🔮 今日运势签</h2><img id="fortuneImg" alt="运势签"><div class="sub" id="fortuneText"></div></div>
+    <div class="card"><h2>💃 今日老婆</h2><img id="wifeImg" alt="今日老婆"><div class="sub" id="wifeText"></div></div>
+  </div>
+  <div class="rank">
+    <h2>🏆 幸运排行榜（累计）</h2>
+    <table id="rankTable"></table>
+    <div class="sub" id="coins"></div>
+  </div>
+</div>
+<script>
+// 平台服务的候选地址：相对路径（若宿主代理）+ 本地端口段（插件被占自动 +1）
+function candidateBases(){
+  const bases = [""];
+  for (let p = 15672; p <= 15676; p++) bases.push(`http://127.0.0.1:${p}`);
+  return bases;
+}
+let API_BASE = null;
+async function findBase(){
+  if (API_BASE !== null) return API_BASE;
+  for (const base of candidateBases()){
+    try{
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 2500);
+      const r = await fetch(base + "/api/summary?user=local", {signal: ctrl.signal});
+      clearTimeout(t);
+      if (r.ok){ API_BASE = base; return base; }
+    }catch(e){ /* 下一个 */ }
+  }
+  return null;
+}
+async function loadData(){
+  const st = document.getElementById("status");
+  st.textContent = "寻找平台服务…";
+  const base = await findBase();
+  if (base === null){ st.textContent = "没找到平台服务喵（插件启动后才有）"; return; }
+  try{
+    const uid = localStorage.getItem("neko_fortune_uid") || "local";
+    const r = await fetch(base + "/api/summary?user=" + encodeURIComponent(uid));
+    const d = await r.json();
+    document.getElementById("today").textContent = d.today + "　·　" + d.user_name + " 的专属运势与老婆记录";
+    document.getElementById("fortuneImg").src = base + d.fortune_img;
+    document.getElementById("wifeImg").src = base + d.wife_img;
+    document.getElementById("fortuneText").textContent = d.fortune_text;
+    document.getElementById("wifeText").textContent = d.wife_text;
+    const tb = document.getElementById("rankTable");
+    const medals = ["🥇","🥈","🥉"];
+    tb.innerHTML = "<tr><td></td><td>用户</td><td>累计幸运</td><td>今日</td></tr>" +
+      d.rank_rows.slice(0,10).map((row,i)=>{
+        const medal = medals[i] || (i+1);
+        const me = (row.user_id === uid) ? ' class="me"' : "";
+        return `<tr${me}><td>${medal}</td><td>${row.name}</td><td>${row.total_luck>=0?"+":""}${row.total_luck}</td><td>${row.today>=0?"+":""}${row.today}</td></tr>`;
+      }).join("");
+    document.getElementById("coins").textContent = `我的钱包：银币 ${d.coins.silver}　金币 ${d.coins.gold}`;
+    st.textContent = "数据已更新喵～";
+  }catch(e){
+    st.textContent = "加载失败：" + e;
+  }
+}
+loadData();
+</script>
+</body>
+</html>

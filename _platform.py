@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -112,11 +113,40 @@ class PlatformServer:
             def log_message(self, fmt, *args):  # 静默访问日志
                 pass
 
+            def _send(self, body: bytes, ctype: str):
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+
             def do_GET(self):
                 path = self.path.split("?", 1)
                 route = path[0]
                 query = path[1] if len(path) > 1 else ""
-                if route in ("/", "/index.html"):
+                if route == "/api/summary":
+                    user_id = "local"
+                    for kv in query.split("&"):
+                        if kv.startswith("user="):
+                            user_id = kv[5:] or "local"
+                    try:
+                        data = outer._data_provider(user_id)
+                    except Exception:
+                        self.send_error(500)
+                        return
+                    payload = {
+                        "today": data["today"],
+                        "user_name": data["user_name"],
+                        "fortune_img": data["fortune_img"],
+                        "wife_img": data["wife_img"],
+                        "fortune_text": data["fortune_text"],
+                        "wife_text": data["wife_text"],
+                        "rank_rows": data["rank_rows"],
+                        "coins": (data.get("me") or {}).get("coins", {"silver": 0, "gold": 0}),
+                    }
+                    self._send(json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+                elif route in ("/", "/index.html"):
                     user_id = "local"
                     for kv in query.split("&"):
                         if kv.startswith("user="):
@@ -131,11 +161,7 @@ class PlatformServer:
                         data["fortune_text"], data["wife_text"], data["rank_rows"],
                         data["user_name"], data.get("me"), data["catgirl_name"],
                     ).encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html; charset=utf-8")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send(body, "text/html; charset=utf-8")
                 elif route.startswith("/cards/"):
                     name = route[len("/cards/"):]
                     if not _FILE_NAME_RE.match(name):
@@ -146,11 +172,7 @@ class PlatformServer:
                         self.send_error(404)
                         return
                     body = file_path.read_bytes()
-                    self.send_response(200)
-                    self.send_header("Content-Type", "image/png")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send(body, "image/png")
                 else:
                     self.send_error(404)
 

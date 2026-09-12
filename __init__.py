@@ -257,8 +257,16 @@ class DailyFortunePlugin(NekoPluginBase):
                 self._platform = server
                 self.platform_port += offset
                 self.logger.info("[daily_fortune] 平台网页已启动: http://127.0.0.1:{}", self.platform_port)
-                return
-        self.logger.warning("[daily_fortune] 平台网页启动失败（端口全被占用）")
+                break
+        else:
+            self.logger.warning("[daily_fortune] 平台网页启动失败（端口全被占用）")
+            return
+        # 注册 static UI 到宿主：插件管理页的「面板」页内嵌本插件的网页，右上角出现「打开界面」
+        try:
+            registered = self.register_static_ui("static")
+            self.logger.info("[daily_fortune] static UI 注册: {}", registered)
+        except Exception as exc:
+            self.logger.warning("[daily_fortune] static UI 注册失败: {}", exc)
 
     def _platform_data(self, user_id: str) -> dict[str, Any]:
         """为平台页面准备数据：确保当天卡片已生成（线程安全，幂等）。"""
