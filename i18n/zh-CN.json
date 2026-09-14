@@ -1,0 +1,15 @@
+{
+  "plugin.name": "猫娘每日关怀",
+  "plugin.description": "早安摸鱼日报 + 今日运势签 + 喝水提醒，相近的定时关怀集成在一个插件里，每个功能独立开关喵～运势按日期确定性生成（同一天结果不变），日报带星期/周末倒计时/发薪日倒计时，喝水提醒可在工作时段按间隔推送。所有文案都是猫娘口吻，主动推送走 push_message 让猫娘自己开口。",
+  "plugin.short_description": "猫娘每日关怀：早安摸鱼日报、今日运势签、喝水提醒，各自独立开关。",
+  "platform.title": "猫娘的每日关怀平台",
+  "platform.subtitle": "今日运势签 · 今日老婆 · 随机美图 · 今日热点 · 幸运排行",
+  "panel.refresh": "刷新",
+  "panel.fortune_title": "今日运势签",
+  "panel.wife_title": "今日老婆",
+  "panel.art_title": "随机涩图/美图（全年龄）",
+  "panel.art_change": "换一张",
+  "panel.news_title": "今日热点",
+  "panel.rank_title": "幸运排行榜（累计）",
+  "panel.loading": "加载中喵…"
+}

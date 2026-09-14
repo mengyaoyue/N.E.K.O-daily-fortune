@@ -7,6 +7,9 @@ payday = 0
 water_start = "09:00"
 water_end = "21:00"
 water_interval_minutes = 60
+fortune_art_source = "auto"
+art_enabled = true
+news_enabled = true
 
 [neko_daily_fortune.switches]
 morning_push = true

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import datetime
 import random
+from functools import lru_cache
 from typing import Any
 
 # 今日老婆池：广为人知的二次元女性角色（name, work）。够丰富但不追求全。
@@ -16,19 +18,19 @@ WAIFU_POOL: list[tuple[str, str, str]] = [
     ("喜多郁代", "孤独摇滚！", "kita_ikuyo"),
     ("芙莉莲", "葬送的芙莉莲", "frieren"),
     ("费伦", "葬送的芙莉莲", "fern_(sousou_no_frieren)"),
-    ("芙宁娜", "原神", "furina"),
+    ("芙宁娜", "原神", "furina_(genshin_impact)"),
     ("神里绫华", "原神", "kamisato_ayaka"),
     ("雷电将军", "原神", "raiden_shogun"),
-    ("甘雨", "原神", "ganyu"),
+    ("甘雨", "原神", "ganyu_(genshin_impact)"),
     ("胡桃", "原神", "hu_tao"),
     ("八重神子", "原神", "yae_miko"),
-    ("刻晴", "原神", "keqing"),
-    ("纳西妲", "原神", "nahida"),
+    ("刻晴", "原神", "keqing_(genshin_impact)"),
+    ("纳西妲", "原神", "nahida_(genshin_impact)"),
     ("心海", "原神", "sangonomiya_kokomi"),
     ("优菈", "原神", "eula_(genshin_impact)"),
-    ("宵宫", "原神", "yoimiya"),
+    ("宵宫", "原神", "yoimiya_(genshin_impact)"),
     ("芭芭拉", "原神", "barbara_(genshin_impact)"),
-    ("三月七", "崩坏：星穹铁道", "march_7th"),
+    ("三月七", "崩坏：星穹铁道", "march_7th_(honkai:_star_rail)"),
     ("卡芙卡", "崩坏：星穹铁道", "kafka_(honkai:_star_rail)"),
     ("银狼", "崩坏：星穹铁道", "silver_wolf_(honkai:_star_rail)"),
     ("花火", "崩坏：星穹铁道", "sparkle_(honkai:_star_rail)"),
@@ -36,12 +38,12 @@ WAIFU_POOL: list[tuple[str, str, str]] = [
     ("阿米娅", "明日方舟", "amiya_(arknights)"),
     ("陈晖洁", "明日方舟", "ch'en_(arknights)"),
     ("凯尔希", "明日方舟", "kal'tsit"),
-    ("能天使", "明日方舟", "exusiai"),
-    ("加藤惠", "路人女主的养成方法", "kato_megumi"),
+    ("能天使", "明日方舟", "exusiai_(arknights)"),
+    ("加藤惠", "路人女主的养成方法", "katou_megumi"),
     ("亚丝娜", "刀剑神域", "yuuki_asuna"),
     ("御坂美琴", "魔法禁书目录", "misaka_mikoto"),
     ("时崎狂三", "约会大作战", "tokisaki_kurumi"),
-    ("约尔", "间谍过家家", "yor_forger"),
+    ("约尔", "间谍过家家", "yor_briar"),
     ("帕瓦", "电锯人", "power_(chainsaw_man)"),
     ("玛奇玛", "电锯人", "makima_(chainsaw_man)"),
     ("星野爱", "我推的孩子", "hoshino_ai"),
@@ -56,9 +58,25 @@ LUCK_SCORES = {"大吉": 7, "中吉": 5, "小吉": 3, "吉": 1, "末吉": 0, "�
 
 
 def draw_wife(date: str, user_id: str, catgirl_name: str = "猫娘") -> dict[str, Any]:
-    """抽今日老婆：同 (date, user) 恒定；附与猫娘的 CP 值彩蛋。"""
+    """抽今日老婆：同 (date, user) 恒定；连续 len(WAIFU_POOL) 天内绝不重复。
+
+    实现：为每个用户单独生成一条「池子的固定随机置换」（角色顺序），
+    再按 `绝对日期序号 % 池大小` 取位。这样得到的是确定性、无状态的取法，
+    却能做到理论最优的去重：
+      1. 同一 (date, user) 结果恒定，重复查询不变（纯函数）；
+      2. 任意连续 42 天内恰好抽到 42 个互不相同的角色，且相邻两天必不同；
+      3. 只有相隔满 42 天才会再次抽到同一角色（42 个角色时的极限）。
+
+    ``catgirl_name`` 保留仅为兼容旧签名，不参与抽选。
+    """
+    size = len(WAIFU_POOL)
+    cycle = _user_cycle(user_id, size)
+    try:
+        day_index = datetime.date.fromisoformat(str(date)).toordinal()
+    except (ValueError, TypeError):
+        day_index = 0
+    name, work, en_tag = WAIFU_POOL[cycle[day_index % size]]
     rng = random.Random(f"waifu|{date}|{user_id}")
-    name, work, en_tag = rng.choice(WAIFU_POOL)
     return {
         "date": date,
         "user_id": user_id,
@@ -67,6 +85,13 @@ def draw_wife(date: str, user_id: str, catgirl_name: str = "猫娘") -> dict[str
         "en_tag": en_tag,
         "bond": rng.randrange(60, 100),  # 与主人的契合度彩蛋
     }
+
+
+@lru_cache(maxsize=None)
+def _user_cycle(user_id: str, size: int) -> tuple[int, ...]:
+    """每个用户一条固定的角色顺序（0..size-1 的确定性随机置换）。"""
+    rng = random.Random(f"waifu-cycle|{user_id}|{size}")
+    return tuple(rng.sample(range(size), size))
 
 
 def luck_score_for(level: str) -> int:

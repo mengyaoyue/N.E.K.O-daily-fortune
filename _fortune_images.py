@@ -212,10 +212,9 @@ def render_wife_card(
     if work:
         draw.text((66, 278), f"《{work[:16]}》", font=_font(32), fill=(110, 110, 125))
 
-    # 角色图优先用网络拉取的；没有则回退猫娘立绘占位
+    # 角色图只用「按该角色检索到」的图；检索失败就画占位，绝不塞猫娘立绘，
+    # 否则会出现「文字描述 A 角色、图却是 B 角色」的错配
     portrait = _load_portrait(character_image, None) if character_image else None
-    if portrait is None:
-        portrait = _load_portrait(portrait_path, portrait_dirs)
     box = (64, 340, w - 64, 800)
     _rounded(draw, box, 30, fill=(255, 255, 255, 200), outline=main, width=5)
     if portrait is not None:

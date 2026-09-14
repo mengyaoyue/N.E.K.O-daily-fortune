@@ -1,0 +1,15 @@
+{
+  "plugin.name": "Daily Catgirl Care",
+  "plugin.description": "Morning fish-slacking report, daily fortune slip, and water reminders combined in one plugin, each with its own switch. Fortune is generated deterministically by date (same day, same result); the report includes the weekday, weekend countdown, and payday countdown; water reminders fire at your configured interval during working hours. All copy is in the catgirl's voice, and proactive pushes go through push_message.",
+  "plugin.short_description": "Daily catgirl care: morning report, daily fortune slip, and water reminders — each with its own switch.",
+  "platform.title": "Catgirl's Daily Care",
+  "platform.subtitle": "Fortune slip · Today's waifu · Random art · Daily news · Luck ranking",
+  "panel.refresh": "Refresh",
+  "panel.fortune_title": "Today's Fortune Slip",
+  "panel.wife_title": "Today's Waifu",
+  "panel.art_title": "Random Art (all-ages)",
+  "panel.art_change": "Another one",
+  "panel.news_title": "Today's News",
+  "panel.rank_title": "Luck Ranking (cumulative)",
+  "panel.loading": "Loading…"
+}

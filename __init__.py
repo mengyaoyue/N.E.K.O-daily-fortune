@@ -1,3 +1,4 @@
+from __future__ import annotations
 """猫娘每日关怀插件（neko_daily_fortune）v0.1 · 作者：MENGYAOYUE
 
 把相近的「定时关怀」功能集成在一个插件里，每个功能独立开关：
@@ -9,10 +10,11 @@
 所有文案都是猫娘口吻。
 """
 
-from __future__ import annotations
+import asyncio
 
 import json
 import threading
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -30,6 +32,7 @@ from plugin.sdk.plugin import (
 )
 
 from ._fortune_images import render_fortune_card, render_wife_card
+from ._daily_extras import fetch_daily_news, fetch_sexy_art, render_news
 from ._image_sources import fetch_character_image, fetch_catgirl_artwork
 from ._platform import PlatformServer
 import os as _os
@@ -123,12 +126,15 @@ class DailyFortunePlugin(NekoPluginBase):
         self.switches: dict[str, bool] = dict(_DEFAULT_SWITCHES)
         self.portrait_path: str = ""
         self.fetch_image: bool = True
-        self.fortune_art_source: str = "local"
+        self.fortune_art_source: str = "auto"
+        self.art_enabled: bool = True
+        self.news_enabled: bool = True
         self.platform_port: int = 15672
         self.platform_enabled: bool = True
         self.auto_open: bool = True
         self._platform: Optional[PlatformServer] = None
         self._users_lock = threading.Lock()
+        self._art_lock = threading.Lock()
         self._config_loaded = False
 
         # 多用户档案（"仅本插件的小平台"）：per-user 运势/老婆/货币记录
@@ -161,7 +167,7 @@ class DailyFortunePlugin(NekoPluginBase):
         self.water_end = _safe_str(section.get("water_end"), "21:00") or "21:00"
         self.portrait_path = _safe_str(section.get("portrait_path"))
         self.fetch_image = _safe_bool(section.get("fetch_image"), True)
-        art_src = _safe_str(section.get("fortune_art_source"), "local").lower()
+        art_src = _safe_str(section.get("fortune_art_source"), "auto").lower()
         self.fortune_art_source = art_src if art_src in ("auto", "local", "off") else "auto"
         self.platform_port = _safe_int(section.get("platform_port"), 15672)
         self.platform_enabled = _safe_bool(section.get("platform_enabled"), True)
@@ -178,6 +184,8 @@ class DailyFortunePlugin(NekoPluginBase):
             for key in _DEFAULT_SWITCHES:
                 if key in saved_switches:
                     self.switches[key] = _safe_bool(saved_switches[key], self.switches[key])
+        self.art_enabled = _safe_bool(section.get("art_enabled"), True)
+        self.news_enabled = _safe_bool(section.get("news_enabled"), True)
         self._config_loaded = True
 
     async def _ensure_config_loaded(self) -> None:
@@ -254,7 +262,8 @@ class DailyFortunePlugin(NekoPluginBase):
             return
         for offset in range(4):
             server = PlatformServer(
-                self.platform_port + offset, self.data_dir / "cards", self._platform_data
+                self.platform_port + offset, self.data_dir / "cards", self._platform_data,
+                art_provider=self._platform_art, news_provider=self._platform_news,
             )
             if server.start():
                 self._platform = server
@@ -313,7 +322,64 @@ class DailyFortunePlugin(NekoPluginBase):
                 "user_name": user.get("name") or self.master_name,
                 "me": {"user_id": user_id, **user},
                 "catgirl_name": self.catgirl_name,
+                "art_enabled": bool(self.art_enabled),
+                "news_enabled": bool(self.news_enabled),
             }
+
+    # ── 平台页「随机美图 / 今日热点」回调（HTTP 线程调用）────────
+    _ART_LIVE_KEEP = 12
+
+    def _new_art_slot(self) -> Path:
+        """为「每次刷新换新图」分配唯一文件名，避免并发写坏同一张图。
+
+        写文件前先把旧图裁到 _ART_LIVE_KEEP - 1 张，给本次新图预留位置，
+        这样写完刚好 _ART_LIVE_KEEP 张，不会多留一张。
+        """
+        cards = self.data_dir / "cards"
+        try:
+            cards.mkdir(parents=True, exist_ok=True)
+            self._prune_art(cards, self._ART_LIVE_KEEP - 1)
+        except Exception:
+            pass
+        return cards / f"art_live_{uuid.uuid4().hex[:10]}.img"
+
+    def _prune_art(self, cards: Path, keep: Optional[int] = None) -> None:
+        """只保留最近若干张聊天室美图，防止无限刷新把磁盘撑爆。"""
+        keep = self._ART_LIVE_KEEP if keep is None else keep
+        with self._art_lock:
+            files = sorted(
+                cards.glob("art_live_*.img"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for old in files[keep:]:
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+
+    def _platform_art(self) -> str:
+        """平台页「随机美图」：每次调用都换一张新图（无上限刷新）。"""
+        if not self.art_enabled:
+            return ""
+        try:
+            slot = self._new_art_slot()
+            got = fetch_sexy_art(str(slot))
+            if got:
+                return "/cards/" + slot.name
+        except Exception:
+            self.logger.exception("[daily_fortune] 平台美图拉取失败")
+        return ""
+
+    def _platform_news(self) -> list[str]:
+        """平台页「今日热点」：拉取 60s API 新闻列表。"""
+        if not self.news_enabled:
+            return []
+        try:
+            return list(fetch_daily_news())
+        except Exception:
+            self.logger.exception("[daily_fortune] 平台热点拉取失败")
+            return []
 
     def _today_record_sync(self, user_id: str, user_name: str):
         """_today_record 的同步版（平台线程里没有事件循环）。"""
@@ -347,14 +413,15 @@ class DailyFortunePlugin(NekoPluginBase):
     def _get_fortune_art(self, date: str, user_id: str) -> Optional[str]:
         """当日运势卡配图：图站猫娘插画（auto）→ 本地社区卡面轮换 → 固定立绘。
 
-        当天缓存一次（art_{date}.img），全用户共享同一张当日图。
+        独立缓存 fortune_art_{date}.img（与「随机美图」的 art_live_*.img 分开，
+        避免两者互相覆盖），同一天所有用户共享同一张图，换日期自动换图。
         """
-        cache = self.data_dir / f"cards/art_{date}.img"
+        cache = self.data_dir / f"cards/fortune_art_{date}.img"
         if cache.exists():
             return str(cache)
         if self.fortune_art_source == "auto" and self.fetch_image:
             try:
-                got = fetch_catgirl_artwork(str(cache), f"{date}|{user_id}")
+                got = fetch_catgirl_artwork(str(cache), date)
                 if got:
                     return got
             except Exception:
@@ -488,6 +555,8 @@ class DailyFortunePlugin(NekoPluginBase):
             "type": "object",
             "properties": {
                 "date": {"type": "string", "description": "可选，YYYY-MM-DD，默认今天"},
+                "user_id": {"type": "string", "description": "用户标识（QQ 号等，可省略）"},
+                "user_name": {"type": "string", "description": "展示用昵称（可省略）"},
             },
         },
         timeout=10.0,
@@ -498,12 +567,26 @@ class DailyFortunePlugin(NekoPluginBase):
         description="生成/查询猫娘口吻的今日运势签与摸鱼指数（同一日期结果固定）。",
         input_schema={
             "type": "object",
-            "properties": {"date": {"type": "string", "description": "YYYY-MM-DD，默认今天"}},
+            "properties": {
+                "date": {"type": "string", "description": "YYYY-MM-DD，默认今天"},
+                "user_id": {"type": "string"},
+                "user_name": {"type": "string"},
+            },
         },
     )
-    async def fortune_entry(self, date: str = "", **_):
+    async def fortune_entry(self, date: str = "", user_id: str = "", user_name: str = "", **_):
         try:
-            return Ok(await self._fortune_text(date))
+            text = await self._fortune_text(date)
+            uid = _safe_str(user_id, "local") or "local"
+            if user_name:
+                with self._users_lock:
+                    self._load_users()
+                    self.users.setdefault(uid, {}).setdefault("name", user_name)
+                    self._save_users()
+            url = self._platform_url(uid)
+            if self.auto_open:
+                self._open_browser(url)
+            return Ok(f"{text}\n🖥 运势卡页面：{url}")
         except Exception as exc:
             self.logger.exception("生成运势失败: {}", exc)
             return Err(SdkError(f"呜…运势签生成失败了：{exc}"))
@@ -682,6 +765,47 @@ class DailyFortunePlugin(NekoPluginBase):
         if me:
             text += f"\n（你目前的银币 {me.get('coins', {}).get('silver', 0)}｜金币 {me.get('coins', {}).get('gold', 0)}）"
         return Ok(text)
+
+    @llm_tool(
+        name="neko_daily_fortune_art",
+        description="获取一张随机涩图（全年龄泳装/内衣系动漫图，不露点），每次调用随机换一张，返回图片路径。",
+        parameters={"type": "object", "properties": {}},
+        timeout=20.0,
+    )
+    @plugin_entry(
+        id="daily_art",
+        name="随机涩图",
+        description="safebooru 全年龄泳装/内衣系动漫图，每次调用随机换一张，可无上限刷新。",
+        input_schema={"type": "object", "properties": {}},
+    )
+    async def daily_art_entry(self, **_):
+        await self._ensure_config_loaded()
+        if not self.art_enabled:
+            return Ok("涩图功能已关闭喵（art_enabled = false）")
+        slot = await asyncio.to_thread(self._new_art_slot)
+        art = await asyncio.to_thread(fetch_sexy_art, str(slot))
+        if art:
+            return Ok(f"🎨 换了一张新涩图喵～已保存到 {art}（平台网页里也能看，可以继续抽）")
+        return Ok("呜…图站没搜到好看的喵，稍后再试。")
+
+    @llm_tool(
+        name="neko_daily_fortune_news",
+        description="获取今日热点新闻（60s API），返回新闻列表文本。",
+        parameters={"type": "object", "properties": {}},
+        timeout=20.0,
+    )
+    @plugin_entry(
+        id="daily_news",
+        name="今日热点",
+        description="获取今日热点新闻列表（60s API 免费源）。",
+        input_schema={"type": "object", "properties": {}},
+    )
+    async def daily_news_entry(self, **_):
+        await self._ensure_config_loaded()
+        if not self.news_enabled:
+            return Ok("热点功能已关闭喵（news_enabled = false）")
+        items = await asyncio.to_thread(fetch_daily_news)
+        return Ok(render_news(items, self.catgirl_name))
 
     @plugin_entry(
         id="open_platform",

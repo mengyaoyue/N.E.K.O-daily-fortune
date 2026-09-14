@@ -14,6 +14,12 @@ payday = 0
 water_start = "09:00"
 water_end = "21:00"
 water_interval_minutes = 60
+# 运势配图来源：auto = 图站猫娘插画→本地卡面轮换；local = 只用本地卡面；off = 只用固定立绘
+fortune_art_source = "auto"
+# 随机涩图/美图（全年龄向）开关：平台页点「换一张」可无限刷新
+art_enabled = true
+# 今日热点（60s 新闻）开关
+news_enabled = true
 
 [neko_daily_fortune.switches]
 morning_push = true

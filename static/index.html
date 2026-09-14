@@ -13,6 +13,9 @@ h1{font-size:26px;margin:8px 0 4px}
 .card{background:#241f33;border:1px solid #3a3352;border-radius:16px;padding:14px;flex:1;min-width:340px}
 .card img{width:100%;border-radius:10px;display:block;min-height:200px;background:#2a2440}
 .card h2{font-size:18px;margin:4px 0 10px;color:#c9b9ff}
+.card.art img{margin-top:10px;display:none;max-height:600px;object-fit:contain;background:#2a2440}
+.news{margin-top:10px;font-size:14px;line-height:1.7;color:#d6d0ea}
+.news ol{margin:0;padding-left:22px}
 .rank{background:#241f33;border:1px solid #3a3352;border-radius:16px;padding:16px;margin-top:18px}
 .rank table{width:100%;border-collapse:collapse;font-size:15px}
 .rank td{padding:7px 6px;border-bottom:1px solid #322b4a}
@@ -31,6 +34,15 @@ button:hover{background:#7d6ef0}
   <div class="cards" style="margin-top:14px">
     <div class="card"><h2>🔮 今日运势签</h2><img id="fortuneImg" alt="运势签"><div class="sub" id="fortuneText"></div></div>
     <div class="card"><h2>💃 今日老婆</h2><img id="wifeImg" alt="今日老婆"><div class="sub" id="wifeText"></div></div>
+  </div>
+  <div class="card art" id="artCard"><h2>🎨 随机涩图/美图（全年龄）</h2>
+    <button onclick="loadArt()">换一张</button>
+    <img id="artImg" alt="随机美图">
+    <div class="sub" id="artStatus">safebooru 全年龄泳装系，点「换一张」可无上限刷新喵</div>
+  </div>
+  <div class="card" id="newsCard"><h2>📰 今日热点</h2>
+    <button onclick="loadNews()">刷新</button>
+    <div class="news" id="newsList">点「刷新」拉取今日热点喵～</div>
   </div>
   <div class="rank">
     <h2>🏆 幸运排行榜（累计）</h2>
@@ -82,10 +94,39 @@ async function loadData(){
         return `<tr${me}><td>${medal}</td><td>${row.name}</td><td>${row.total_luck>=0?"+":""}${row.total_luck}</td><td>${row.today>=0?"+":""}${row.today}</td></tr>`;
       }).join("");
     document.getElementById("coins").textContent = `我的钱包：银币 ${d.coins.silver}　金币 ${d.coins.gold}`;
+    document.getElementById("artCard").style.display = (d.art_enabled === false) ? "none" : "";
+    document.getElementById("newsCard").style.display = (d.news_enabled === false) ? "none" : "";
     st.textContent = "数据已更新喵～";
   }catch(e){
     st.textContent = "加载失败：" + e;
   }
+}
+async function loadArt(){
+  const st = document.getElementById("artStatus");
+  const img = document.getElementById("artImg");
+  const base = await findBase();
+  if (base === null){ st.textContent = "没找到平台服务喵（插件启动后才有）"; return; }
+  st.textContent = "正在拉图喵…";
+  try{
+    const r = await fetch(base + "/api/art?t=" + Date.now());
+    const d = await r.json();
+    if (!d.ok){ st.textContent = "图站没搜到，再点一次喵～"; return; }
+    img.src = base + d.img + "?t=" + Date.now();
+    img.style.display = "block";
+    st.textContent = "已换新图喵（可以继续点，刷新无上限）";
+  }catch(e){ st.textContent = "加载失败：" + e; }
+}
+async function loadNews(){
+  const box = document.getElementById("newsList");
+  const base = await findBase();
+  if (base === null){ box.textContent = "没找到平台服务喵（插件启动后才有）"; return; }
+  box.textContent = "正在拉取热点喵…";
+  try{
+    const r = await fetch(base + "/api/news?t=" + Date.now());
+    const d = await r.json();
+    if (!d.items || !d.items.length){ box.textContent = "今日热点没拉到喵，稍后再试。"; return; }
+    box.innerHTML = "<ol>" + d.items.slice(0,10).map(x=>`<li>${x}</li>`).join("") + "</ol>";
+  }catch(e){ box.textContent = "加载失败：" + e; }
 }
 loadData();
 </script>
